@@ -290,144 +290,490 @@ function hex2rgba(h){
 
 /* 处理 */
 $('processBtn').addEventListener('click',processZip);
-async function processZip(){
-  if(!zipData||!animInfo) return;
-  const btn=$('processBtn'); btn.disabled=true;
-  $('progress').classList.add('show'); stopPlay();
-  try{
-    const W=Math.max(1,+$('setW').value||animInfo.W);
-    const H=Math.max(1,+$('setH').value||animInfo.H);
-    const fillTrans=$('transBlack').checked;
-    const useColoros=$('colorosDesc').checked;
-    let bg={r:0,g:0,b:0,a:255};
-    if($('autoBg').checked){
-      const p0=animInfo.parts.find(p=>p.pngs.length)||animInfo.parts[0];
-      if(p0) bg=await detectBg(zipData.files[p0.pngs[0].name]);
-    } else bg=hex2rgba(currentHex||'#000000');
-    $('swatch').style.background='rgb('+bg.r+','+bg.g+','+bg.b+')';
-    let descOut;
-    if(useColoros){
-      descOut='g '+W+' '+H+' 0 0 '+animInfo.fps+'\n';
-      animInfo.segs.forEach(s=>{descOut+='c '+s[1]+' '+s[2]+' '+s[3]+'\n';});
-    } else descOut=animInfo.descRaw;
-    const out=new JSZip(); out.file('desc.txt',descOut);
-    previewFrames={};
-    let done=0; const total=animInfo.totalFrames;
-    const upd=()=>{ $('progressFill').style.width=(done/total*100)+'%'; $('progressPct').textContent=Math.round(done/total*100)+'%'; $('progressText').textContent='处理中 '+done+' / '+total; };
-    for(const part of animInfo.parts){
-      previewFrames[part.name]=[];
-      for(const f of part.files){
-        const leaf=f.leaf.toLowerCase();
-        if(leaf==='trim.txt') continue;
-        const blob=await zipData.files[f.name].async('blob');
-        if(leaf==='audio.wav'){ out.file(part.name+'/'+f.leaf,blob,{compression:'STORE'}); continue; }
-        if(!/\.png$/i.test(leaf)) continue;
-        const idx=part.pngs.indexOf(f);
-        const line=part.hasTrim&&part.trimLines&&part.trimLines[idx]?part.trimLines[idx].trim():null;
-        if(line){
-          const m=line.match(/^(\d+)x(\d+)\+(\d+)\+(\d+)$/);
-          if(!m){ out.file(part.name+'/'+f.leaf,blob,{compression:'STORE'}); done++; continue; }
-          const [, , , tx, ty]=m.map(Number);
-          const bmp=await createImageBitmap(blob);
-          const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
-          const cx=cv.getContext('2d');
-          cx.fillStyle='rgba('+bg.r+','+bg.g+','+bg.b+','+(bg.a/255)+')';
-          cx.fillRect(0,0,W,H);
-          cx.drawImage(bmp,tx,ty);
-          bmp.close();
-          if(fillTrans){
-            const id=cx.getImageData(0,0,W,H), d=id.data;
-            for(let i=3;i<d.length;i+=4){ if(d[i]===0){ d[i-3]=bg.r; d[i-2]=bg.g; d[i-1]=bg.b; d[i]=255; } }
-            cx.putImageData(id,0,0);
-          }
-          const outBlob=await new Promise(r=>cv.toBlob(r,'image/png'));
-          out.file(part.name+'/'+f.leaf,outBlob,{compression:'STORE'});
-          previewFrames[part.name].push(cv);
-        }else{
-          out.file(part.name+'/'+f.leaf,blob,{compression:'STORE'});
-          const bmp=await createImageBitmap(blob);
-          const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
-          cv.getContext('2d').drawImage(bmp,0,0);
-          bmp.close();
-          previewFrames[part.name].push(cv);
-        }
-        done++;
-        if(done%4===0){ upd(); await sleep(0); }
+
+/*
+ * 将 PNG 绘制到目标分辨率。
+ *
+ * trim.txt 中的坐标是以 desc.txt 的原始分辨率为基准，
+ * 所以不能直接把 tx / ty 当成目标画布坐标。
+ */
+function drawScaledFrame(
+  bmp,
+  W,
+  H,
+  bg,
+  fillTrans,
+  sx=0,
+  sy=0,
+  sw=bmp.width,
+  sh=bmp.height,
+  dx=0,
+  dy=0,
+  dw=W,
+  dh=H
+){
+  const cv=document.createElement('canvas');
+  cv.width=W;
+  cv.height=H;
+
+  const cx=cv.getContext('2d');
+
+  cx.fillStyle=
+    'rgba('+
+    bg.r+','+
+    bg.g+','+
+    bg.b+','+
+    (bg.a/255)+')';
+
+  cx.fillRect(0,0,W,H);
+
+  cx.imageSmoothingEnabled=true;
+  cx.imageSmoothingQuality='high';
+
+  cx.drawImage(
+    bmp,
+    sx,
+    sy,
+    sw,
+    sh,
+    dx,
+    dy,
+    dw,
+    dh
+  );
+
+  if(fillTrans){
+    const id=cx.getImageData(0,0,W,H);
+    const d=id.data;
+
+    for(let i=3;i<d.length;i+=4){
+      if(d[i]===0){
+        d[i-3]=bg.r;
+        d[i-2]=bg.g;
+        d[i-1]=bg.b;
+        d[i]=255;
       }
     }
-    upd(); $('progressText').textContent='打包中…';
-    const blob=await out.generateAsync({type:'blob',compression:'STORE'},m=>{ $('progressPct').textContent=Math.round(m.percent)+'%'; });
-    $('downloadBtn').style.display='';
-    $('downloadBtn').dataset.url=URL.createObjectURL(blob);
-    $('previewEmpty').style.display='none';
-    $('stageWrap').style.display='flex';
-    $('controls').style.display='flex';
-    $('previewPart').disabled=false; $('playBtn').disabled=false;
-    curPart=$('previewPart').value;
-    if(curPart!=='__all__'&&previewFrames[curPart]&&previewFrames[curPart][0]) renderFrame(previewFrames[curPart][0]);
-    toast('完成，'+total+' 帧全部还原');
-  }catch(err){
-    console.error(err); toast('处理失败：'+err.message);
-  }finally{
-    btn.disabled=false;
-    setTimeout(()=>$('progress').classList.remove('show'),500);
+
+    cx.putImageData(id,0,0);
   }
+
+  return cv;
 }
 
-$('downloadBtn').addEventListener('click',()=>{
-  const a=document.createElement('a');
-  a.href=$('downloadBtn').dataset.url;
-  a.download=$('outName').value.trim()||'bootanimation_new.zip';
-  document.body.appendChild(a);a.click();a.remove();
-  toast('开始下载');
-});
+async function processZip(){
+  if(!zipData||!animInfo) return;
 
-/* 预览 */
-$('previewPart').addEventListener('change',e=>{
-  curPart=e.target.value; stopPlay();
-  if(curPart!=='__all__'&&previewFrames[curPart]&&previewFrames[curPart][0]) renderFrame(previewFrames[curPart][0]);
-});
-$('playBtn').addEventListener('click',()=>playing?stopPlay():startPlay());
+  const btn=$('processBtn');
+  btn.disabled=true;
 
-function buildSeq(){
-  const out=[];
-  for(const seg of animInfo.segs){
-    const name=seg[3];
-    const p=animInfo.parts.find(x=>x.name.toLowerCase()===name.toLowerCase());
-    if(!p) continue;
-    const frames=previewFrames[p.name];
-    if(!frames||!frames.length) continue;
-    out.push({name, frames, count:parseInt(seg[1])||0, pause:parseInt(seg[2])||0});
-  }
-  return out;
-}
-function startPlay(){
-  if(!previewFrames||!Object.keys(previewFrames).length) return;
-  playing=true; $('icPlay').style.display='none'; $('icPause').style.display='block';
-  const fps=Math.min(animInfo.fps||30,60);
-  const stepMs=()=>1000/fps;
-  if(curPart==='__all__'){
-    seq=buildSeq(); sIdx=0; fIdx=0; rIdx=0; pauseLeft=0;
-    if(!seq.length){ stopPlay(); return; }
-    const stepAll=()=>{
-      if(!playing) return;
-      const s=seq[sIdx];
-      if(pauseLeft>0){ pauseLeft--; renderFrame(s.frames[Math.min(fIdx-1,s.frames.length-1)]); timer=setTimeout(stepAll,stepMs()); return; }
-      if(fIdx<s.frames.length){ renderFrame(s.frames[fIdx]); fIdx++; timer=setTimeout(stepAll,stepMs()); return; }
-      rIdx++;
-      if(rIdx<(s.count||1)){ fIdx=0; timer=setTimeout(stepAll,stepMs()); return; }
-      pauseLeft=s.pause; sIdx=(sIdx+1)%seq.length; rIdx=0; fIdx=0;
-      timer=setTimeout(stepAll,stepMs());
+  $('progress').classList.add('show');
+  stopPlay();
+
+  try{
+    /*
+     * 原始分辨率
+     */
+    const originalW=animInfo.W;
+    const originalH=animInfo.H;
+
+    /*
+     * 用户设置的目标分辨率
+     */
+    const W=Math.max(
+      1,
+      +$('setW').value||originalW
+    );
+
+    const H=Math.max(
+      1,
+      +$('setH').value||originalH
+    );
+
+    /*
+     * 原始坐标 → 目标坐标
+     */
+    const scaleX=W/originalW;
+    const scaleY=H/originalH;
+
+    const fillTrans=$('transBlack').checked;
+    const useColoros=$('colorosDesc').checked;
+
+    /*
+     * 背景色
+     */
+    let bg={
+      r:0,
+      g:0,
+      b:0,
+      a:255
     };
-    stepAll();
-  }else{
-    const frames=previewFrames[curPart];
-    if(!frames||!frames.length){ stopPlay(); return; }
-    let i=0;
-    const step=()=>{ if(!playing) return; renderFrame(frames[i]); i=(i+1)%frames.length; timer=setTimeout(step,stepMs()); };
-    step();
+
+    if($('autoBg').checked){
+      const p0=
+        animInfo.parts.find(p=>p.pngs.length)||
+        animInfo.parts[0];
+
+      if(p0){
+        bg=await detectBg(
+          zipData.files[p0.pngs[0].name]
+        );
+      }
+    }else{
+      bg=hex2rgba(
+        currentHex||'#000000'
+      );
+    }
+
+    $('swatch').style.background=
+      'rgb('+bg.r+','+bg.g+','+bg.b+')';
+
+    /*
+     * desc.txt
+     */
+    let descOut;
+
+    if(useColoros){
+      descOut=
+        'g '+
+        W+
+        ' '+
+        H+
+        ' 0 0 '+
+        animInfo.fps+
+        '\n';
+
+      animInfo.segs.forEach(s=>{
+        descOut+=
+          'c '+
+          s[1]+
+          ' '+
+          s[2]+
+          ' '+
+          s[3]+
+          '\n';
+      });
+    }else{
+      descOut=animInfo.descRaw;
+    }
+
+    const out=new JSZip();
+
+    out.file(
+      'desc.txt',
+      descOut
+    );
+
+    previewFrames={};
+
+    let done=0;
+
+    const total=animInfo.totalFrames;
+
+    const upd=()=>{
+      $('progressFill').style.width=
+        (done/total*100)+'%';
+
+      $('progressPct').textContent=
+        Math.round(done/total*100)+'%';
+
+      $('progressText').textContent=
+        '处理中 '+done+' / '+total;
+    };
+
+    /*
+     * 处理所有 part
+     */
+    for(const part of animInfo.parts){
+
+      previewFrames[part.name]=[];
+
+      for(const f of part.files){
+
+        const leaf=f.leaf.toLowerCase();
+
+        /*
+         * trim.txt 不输出
+         */
+        if(leaf==='trim.txt'){
+          continue;
+        }
+
+        const blob=
+          await zipData.files[f.name].async('blob');
+
+        /*
+         * 音频直接复制
+         */
+        if(leaf==='audio.wav'){
+          out.file(
+            part.name+'/'+f.leaf,
+            blob,
+            {
+              compression:'STORE'
+            }
+          );
+
+          continue;
+        }
+
+        /*
+         * 只处理 PNG
+         */
+        if(!/\.png$/i.test(leaf)){
+          continue;
+        }
+
+        const idx=
+          part.pngs.indexOf(f);
+
+        const line=
+          part.hasTrim&&
+          part.trimLines&&
+          part.trimLines[idx]
+            ?part.trimLines[idx].trim()
+            :null;
+
+        const bmp=
+          await createImageBitmap(blob);
+
+        let cv;
+
+        /*
+         * ========================================
+         * trim.txt 帧
+         * ========================================
+         */
+        if(line){
+
+          const m=
+            line.match(
+              /^(\d+)x(\d+)\+(\d+)\+(\d+)$/
+            );
+
+          if(!m){
+            bmp.close();
+
+            out.file(
+              part.name+'/'+f.leaf,
+              blob,
+              {
+                compression:'STORE'
+              }
+            );
+
+            done++;
+
+            if(done%4===0){
+              upd();
+              await sleep(0);
+            }
+
+            continue;
+          }
+
+          /*
+           * trim.txt 格式：
+           *
+           * width x height + x + y
+           *
+           * 例如：
+           *
+           * 500x800+290+700
+           *
+           * 表示：
+           *
+           * 原始画面中
+           * x      = 290
+           * y      = 700
+           * width  = 500
+           * height = 800
+           */
+          const trimW=Number(m[1]);
+          const trimH=Number(m[2]);
+          const tx=Number(m[3]);
+          const ty=Number(m[4]);
+
+          /*
+           * 关键修复：
+           *
+           * trim.txt 的坐标属于原始分辨率，
+           * 自定义分辨率以后必须进行缩放。
+           */
+          const dx=Math.round(
+            tx*scaleX
+          );
+
+          const dy=Math.round(
+            ty*scaleY
+          );
+
+          const dw=Math.round(
+            trimW*scaleX
+          );
+
+          const dh=Math.round(
+            trimH*scaleY
+          );
+
+          /*
+           * 将裁剪帧放回目标画布。
+           */
+          cv=drawScaledFrame(
+            bmp,
+            W,
+            H,
+            bg,
+            fillTrans,
+            0,
+            0,
+            bmp.width,
+            bmp.height,
+            dx,
+            dy,
+            dw,
+            dh
+          );
+
+          bmp.close();
+
+          const outBlob=
+            await new Promise(resolve=>{
+              cv.toBlob(
+                resolve,
+                'image/png'
+              );
+            });
+
+          out.file(
+            part.name+'/'+f.leaf,
+            outBlob,
+            {
+              compression:'STORE'
+            }
+          );
+
+          previewFrames[
+            part.name
+          ].push(cv);
+
+        /*
+         * ========================================
+         * 普通 PNG
+         * ========================================
+         */
+        }else{
+
+          /*
+           * 没有 trim.txt 的 PNG 也统一输出
+           * 为用户指定的目标分辨率。
+           */
+          cv=drawScaledFrame(
+            bmp,
+            W,
+            H,
+            bg,
+            fillTrans
+          );
+
+          bmp.close();
+
+          const outBlob=
+            await new Promise(resolve=>{
+              cv.toBlob(
+                resolve,
+                'image/png'
+              );
+            });
+
+          out.file(
+            part.name+'/'+f.leaf,
+            outBlob,
+            {
+              compression:'STORE'
+            }
+          );
+
+          previewFrames[
+            part.name
+          ].push(cv);
+        }
+
+        done++;
+
+        if(done%4===0){
+          upd();
+          await sleep(0);
+        }
+      }
+    }
+
+    upd();
+
+    $('progressText').textContent=
+      '打包中…';
+
+    const blob=
+      await out.generateAsync(
+        {
+          type:'blob',
+          compression:'STORE'
+        },
+        m=>{
+          $('progressPct').textContent=
+            Math.round(m.percent)+'%';
+        }
+      );
+
+    $('downloadBtn').style.display='';
+
+    $('downloadBtn').dataset.url=
+      URL.createObjectURL(blob);
+
+    $('previewEmpty').style.display='none';
+
+    $('stageWrap').style.display='flex';
+
+    $('controls').style.display='flex';
+
+    $('previewPart').disabled=false;
+
+    $('playBtn').disabled=false;
+
+    curPart=$('previewPart').value;
+
+    if(
+      curPart!=='__all__'&&
+      previewFrames[curPart]&&
+      previewFrames[curPart][0]
+    ){
+      renderFrame(
+        previewFrames[curPart][0]
+      );
+    }
+
+    toast(
+      '完成，'+
+      total+
+      ' 帧全部还原'
+    );
+
+  }catch(err){
+
+    console.error(err);
+
+    toast(
+      '处理失败：'+
+      err.message
+    );
+
+  }finally{
+
+    btn.disabled=false;
+
+    setTimeout(
+      ()=>$('progress').classList.remove('show'),
+      500
+    );
   }
 }
-function stopPlay(){ playing=false; clearTimeout(timer); $('icPlay').style.display='block'; $('icPause').style.display='none'; }
-function renderFrame(cv){ if(!cv) return; const c=$('previewCanvas'); c.width=cv.width; c.height=cv.height; c.getContext('2d').drawImage(cv,0,0); }
-})();
