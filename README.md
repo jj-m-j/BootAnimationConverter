@@ -42,6 +42,6 @@
 
 - 界面设计参考 Miuix
 - 字体使用 **MiSans © Xiaomi**
-- 项目开发过程中使用 **DeepSeek v4 Flash** 辅助开发
+- 项目开发过程中使用 **DeepSeek v4 Flash** **ChatGPT 5.6 Luna** 辅助开发
 
 ---
