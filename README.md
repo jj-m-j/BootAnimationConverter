@@ -36,7 +36,7 @@
 
 ## 开源许可证
 
-本项目采用 MIT License 开源许可证。
+本项目采用[MIT License](https://github.com/jj-m-j/trimforge/blob/main/LICENSE)许可证。
 
 ## 致谢
 
