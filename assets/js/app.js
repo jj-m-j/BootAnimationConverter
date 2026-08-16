@@ -340,14 +340,16 @@ async function processZip(){
         if(line){
           const m=line.match(/^(\d+)x(\d+)\+(\d+)\+(\d+)$/);
           if(!m){ out.file(part.name+'/'+f.leaf,blob,{compression:'STORE'}); done++; continue; }
-          const [,tw,th,tx,ty]=m.map(Number);
+          const [, , , tx, ty]=m.map(Number);
           const bmp=await createImageBitmap(blob);
+          /* 绘制尺寸以 PNG 实际尺寸为准：trim 行的 WxH 在部分包里写的是完整画布尺寸而非裁剪图尺寸 */
+          const pngW=bmp.width, pngH=bmp.height;
           const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
           const cx=cv.getContext('2d');
           cx.fillStyle='rgba('+bg.r+','+bg.g+','+bg.b+','+(bg.a/255)+')';
           cx.fillRect(0,0,W,H);
-          /* trim 坐标跟着新画布一起缩放平移 */
-          cx.drawImage(bmp,tx*scale+ox,ty*scale+oy,tw*scale,th*scale);
+          /* trim 坐标跟着新画布一起缩放平移，图片尺寸按同一比例缩放 */
+          cx.drawImage(bmp,tx*scale+ox,ty*scale+oy,pngW*scale,pngH*scale);
           bmp.close();
           if(fillTrans){
             const id=cx.getImageData(0,0,W,H), d=id.data;
