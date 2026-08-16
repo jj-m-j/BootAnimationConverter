@@ -297,6 +297,9 @@ async function processZip(){
   try{
     const W=Math.max(1,+$('setW').value||animInfo.W);
     const H=Math.max(1,+$('setH').value||animInfo.H);
+    /* 自定义分辨率：等比缩放 + 居中，边缘用背景色兜底，画面不变形 */
+    const scale=Math.min(W/animInfo.W,H/animInfo.H);
+    const ox=(W-animInfo.W*scale)/2, oy=(H-animInfo.H*scale)/2;
     const fillTrans=$('transBlack').checked;
     const useColoros=$('colorosDesc').checked;
     let bg={r:0,g:0,b:0,a:255};
@@ -309,7 +312,17 @@ async function processZip(){
     if(useColoros){
       descOut='g '+W+' '+H+' 0 0 '+animInfo.fps+'\n';
       animInfo.segs.forEach(s=>{descOut+='c '+s[1]+' '+s[2]+' '+s[3]+'\n';});
-    } else descOut=animInfo.descRaw;
+    } else {
+      /* 非 ColorOS：保留原格式，只把第一行尺寸换成新值，保证 desc 与画面一致 */
+      descOut=animInfo.descRaw.split(/\r?\n/).map(ln=>{
+        const s=ln.trim();
+        if(!s||s.startsWith('#')) return ln;
+        const t=s.split(/\s+/);
+        if(t[0]==='g'&&t.length>=6) return 'g '+W+' '+H+' '+t[3]+' '+t[4]+' '+t[5];
+        if(/^\d+$/.test(t[0])&&t.length>=3) return W+' '+H+' '+t[2];
+        return ln;
+      }).join('\n');
+    }
     const out=new JSZip(); out.file('desc.txt',descOut);
     previewFrames={};
     let done=0; const total=animInfo.totalFrames;
@@ -327,13 +340,14 @@ async function processZip(){
         if(line){
           const m=line.match(/^(\d+)x(\d+)\+(\d+)\+(\d+)$/);
           if(!m){ out.file(part.name+'/'+f.leaf,blob,{compression:'STORE'}); done++; continue; }
-          const [, , , tx, ty]=m.map(Number);
+          const [,tw,th,tx,ty]=m.map(Number);
           const bmp=await createImageBitmap(blob);
           const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
           const cx=cv.getContext('2d');
           cx.fillStyle='rgba('+bg.r+','+bg.g+','+bg.b+','+(bg.a/255)+')';
           cx.fillRect(0,0,W,H);
-          cx.drawImage(bmp,tx,ty);
+          /* trim 坐标跟着新画布一起缩放平移 */
+          cx.drawImage(bmp,tx*scale+ox,ty*scale+oy,tw*scale,th*scale);
           bmp.close();
           if(fillTrans){
             const id=cx.getImageData(0,0,W,H), d=id.data;
@@ -347,7 +361,11 @@ async function processZip(){
           out.file(part.name+'/'+f.leaf,blob,{compression:'STORE'});
           const bmp=await createImageBitmap(blob);
           const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
-          cv.getContext('2d').drawImage(bmp,0,0);
+          const cx=cv.getContext('2d');
+          /* 完整帧也按同一比例缩放居中，边缘用背景色兜底 */
+          cx.fillStyle='rgba('+bg.r+','+bg.g+','+bg.b+','+(bg.a/255)+')';
+          cx.fillRect(0,0,W,H);
+          cx.drawImage(bmp,ox,oy,animInfo.W*scale,animInfo.H*scale);
           bmp.close();
           previewFrames[part.name].push(cv);
         }
