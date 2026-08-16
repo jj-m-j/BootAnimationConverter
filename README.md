@@ -17,7 +17,7 @@
 
 ## 使用方法
 
-1. 打开 开机动画适配
+1. 打开 [开机动画适配](https://jj-m-j.github.io/BootAnimationConverter/) 
 2. 上传包含 `trim.txt` 的 `bootanimation.zip`
 3. 根据需要调整画面尺寸、背景色等参数
 4. 点击「开始处理」
