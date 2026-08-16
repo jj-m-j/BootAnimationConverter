@@ -25,6 +25,6 @@
 
 ## 致谢
 
-- 界面设计参考 [Miuix](https://github.com/compose-miuix-ui/miuix)（Xiaomi HyperOS 设计语言）
-- 字体 MiSans © Xiaomi，使用遵循 [MiSans 字体知识产权许可协议](https://hyperos.mi.com/font/zh/)
+- 界面设计参考 [Miuix](https://github.com/compose-miuix-ui/miuix)
+- 字体 MiSans © Xiaomi
 - 本项目由 DeepSeek v4 flash 开发
